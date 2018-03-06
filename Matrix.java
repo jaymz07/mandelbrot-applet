@@ -9,6 +9,28 @@ public class Matrix
 	{
 		data = mat;
 	}
+	public Matrix(int [][] mat)
+	{
+		for(int i=0;i<mat.length;i++)
+		  for(int j=0;j<mat[0].length;j++)
+		      data[i][j]=mat[i][j];
+	}
+	public Matrix(String s)
+	{
+	  String [] lines=s.split("\n"),l=lines[0].split("\t");
+	  int r=lines.length,c=l.length;
+	  data=new double[r][c];
+	  if(l[c-1].length()==0)
+	    c--;
+	  for(int i=0;i<r;i++)
+	  {
+	    String [] line=lines[i].split("\t");
+	    for(int j=0;j<c;j++)
+	    {
+	      data[i][j]=Double.parseDouble(line[j]);
+	    }
+	  }
+	}
 	public Matrix(int n, char id)
 	{
 		data= new double[n][n];
@@ -92,7 +114,7 @@ public class Matrix
 		out=out+"}";
 		return out;
 	}
-	public double determinant()
+	public double determinantRec()
 	{
 		int rows=data.length,cols=data[0].length,n=rows;
 		if(rows!=cols)
@@ -122,6 +144,14 @@ public class Matrix
 			return out;
 		}
 	}
+
+	public double determinant()
+	{
+		Matrix copy=new Matrix(this);
+		double scale=copy.triangulate();
+		return copy.diagonal()*scale;
+	}
+
 	public void multiply(double m)
 	{
 		for(int i=0;i<data.length;i++)
@@ -224,6 +254,55 @@ public class Matrix
 			for(int j=0;j<data[0].length;j++)
 				out[j][i]=data[i][j];
 		return new Matrix(out);
+	}
+	public void addRowTimes(int r, int rt, double c)
+	{
+		for(int j=0;j<data[0].length;j++)
+			data[r][j]+=data[rt][j]*c;
+	}
+	public void swapRows(int r1, int r2)
+	{
+		for(int j=0;j<data[0].length;j++) {
+			double temp=data[r1][j];
+			data[r1][j]=data[r2][j];
+			data[r2][j]=temp;
+		}
+	}
+	public double triangulate()
+	{
+		double scale=1;
+		for(int i=0;i<data.length;i++) {
+			if(data[i][i]==0)
+				for(int j=i+1;j<data.length;j++)
+				{
+					if(data[j][i]!=0) {
+						scale*=-1;
+						swapRows(i,j);
+						break;
+					}
+				}
+			for(int j=i+1;j<data.length;j++)
+			{
+				addRowTimes(j,i,-data[j][i]/data[i][i]);
+			}
+		}
+		return scale;
+	}
+	public double diagonal()
+	{
+		double prod=1;
+		for(int i=0;i<data.length;i++)
+			prod*=data[i][i];
+		return prod;
+	}
+	public void roundToInt()
+	{
+		for(int i=0;i<data.length;i++)
+			for(int j=0;j<data[0].length;j++){
+				if(data[i][j]%1>.5)
+					data[i][j]++;
+				data[i][j]=(int)(data[i][j]);
+			}
 	}
 }
 

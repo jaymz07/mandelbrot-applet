@@ -1,4 +1,4 @@
-	import java.awt.*;
+import java.awt.*;
 import java.applet.*;
 import java.awt.event.*;
 import java.io.*;
@@ -9,9 +9,10 @@ import java.awt.image.BufferedImage;
 
 public class Mandelbrot extends Applet implements MouseListener, MouseMotionListener, KeyListener
 {
-	int XBOUND, YBOUND;
-	int numIterations=20,COLORMODE0=0,COLORMODE1=0,dragging=0,calcMode=1,maxValue=0,iterateMode=1;
-	double rW=2,iW=2,cutOff=10000;
+	int XBOUND, YBOUND, NUMFRAMES=300;
+	int numIterations=200,COLORMODE0=0,COLORMODE1=0,dragging=0,calcMode=1,maxValue=0,ANIMATING=0;
+	double rW=2,iW=2,cutOff=10000,power=2,pStart=2,pEnd=3,scale=1;
+	float contrast=1;
 	Point cent=new Point(-0.743643887037158704752191506114774, 0.131825904205311970493132056385139),boxPoint;
 	boolean DRAWZOOM=false;
 
@@ -23,10 +24,11 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 
 	Point mP=new Point(0,0),mPP=new Point(0,0);
 
-	Matrix vals;
+	int [][] vals;
+	int numThreads=Runtime.getRuntime().availableProcessors();
 
-	Thread loading=null;
-	ZoomScreen zS=null;
+	LoadingBar loading=null;
+	MIterator [] threads= new MIterator[numThreads];
 
 	public double maxAbs(double d1, double d2)
 	{
@@ -44,63 +46,63 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 		//return z.pow(3).plus(c);
 		//return z.times(z).plus(c.dividedBy(z.plus(1)));
 		//return z.times(c.times(z.exp())).plus(c.dividedBy(z.sin().plus(1.001)));
-		return z.times(z).plus(c);
+		return z.times(z).plus(c.times(scale));
+	}
+	public Complex powFunction(Complex z, Complex c, double pow)
+	{
+		//return z.times(z).plus(c.exp()); //fractal wall
+		//return z.exp().plus(c.exp()); //wtf flowers?
+		//return z.exp().plus(c.times(c));
+		//return z.times(z.exp().cos()).plus(c.times(c.plus(z).exp()));
+		//return z.pow(3).plus(c);
+		//return z.times(z).plus(c.dividedBy(z.plus(1)));
+		return z.pow(pow).plus(c);
 	}
 
 	public void calculate()
 	{
-		computeMatrix();
-		if(SMOOTHING)
-			vals=vals.smoothData(1,10);
-	}
-
-	public void computeMatrix()
-	{
-		double [][] stuff = new double[YBOUND][XBOUND];
-		if(dragging==2)
-		{
-			loading=new Thread(zS);
-			loading.start();
-		}
-		maxValue=0;
-		for(int i=0;i<stuff.length;i++) {
-			for(int j=0;j<stuff[0].length;j++)
-			{
-				Complex c= new Complex(cent.x-rW/2+rW/XBOUND*j,cent.y-iW/2+iW/YBOUND*i), num=new Complex(0,0);
-				double d=Math.PI;
-				if(calcMode==0) {
-					for(int k=0;k<numIterations;k++)
-						num=function(num,c);
-					stuff[i][j]=num.abs();
-				}
-				if(calcMode==1)
-				{
-					if(iterateMode==1) {
-						num = new Complex(cent.x-rW/2+rW/XBOUND*j,cent.y-iW/2+iW/YBOUND*i);
-						c = new Complex(0.3,0.008); 
-					}
-					for(int k=0;k<numIterations;k++){
-						num=function(num,c);
-						if(num.abs()>cutOff) {
-							stuff[i][j]=k+1;
-							maxValue=Math.max(maxValue,k+1);
-							break;
-						}
-						if(k==numIterations-1)
-							stuff[i][j]=0;
-					}
-				}
-
-			}
-			if(dragging==2)
-				zS.progress=((double)i)/(stuff.length-1);
-		}
-		if(dragging==2) {
-			zS.cont=false;
-			System.out.println("iW:\t"+iW+"\nrW:\t"+rW+"\n"+cent+"\n----------------------\n");
-		}
-		dragging=0;
-		vals=new Matrix(stuff);
+	    vals=new int[YBOUND][XBOUND];
+	   loading.start();
+	   for(int i=0;i<threads.length;i++)
+	   {
+	      threads[i]=new MIterator(XBOUND,YBOUND,rW,iW,cent,numThreads,i,numIterations);
+	      if(i==0)
+		threads[i].loading=loading;
+	      threads[i].start();
+	   }
+	   int [][][] outs = new int[numThreads][][];
+	   maxValue=0;
+	   for(int i=0;i<threads.length;i++)
+	   {
+	      try {
+		  threads[i].join();
+		  maxValue=Math.max(threads[i].maxIterations,maxValue);
+	      }
+	      catch(InterruptedException e){
+	      }
+	    outs[i]=threads[i].out;
+	   }
+	   int prog=0;
+	   for(int i=0;i<threads.length;i++)
+	   {
+	    int count=0;
+	    for(int j=i;j<YBOUND;j+=numThreads)
+	    {
+	      for(int k=0;k<XBOUND;k++) {
+		vals[j][k]=outs[i][count][k];
+	      }
+	      count++;
+	      prog++;
+	      loading.progress=.5+((double)prog)/YBOUND/2;
+	    }
+	   }
+	  loading.cont=false;
+	  try {
+		loading.join();
+	  }
+	  catch(InterruptedException e){
+	  }
+	  dragging=0;
 	}
 	public Point getScreenPoint(Point in)
 	{
@@ -108,17 +110,14 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 	}
 	public void paint(Graphics p)
 	{
-		if(dragging==2){
-			double width=maxAbs(mP.x-boxPoint.x,mP.y-boxPoint.y);
-			zS=new ZoomScreen(p,XBOUND,YBOUND,image,boxPoint,new Point(boxPoint.x+width,boxPoint.y+width));
-		}
 		if(init)
 		{
 			Dimension appletSize = this.getSize();
   	 		YBOUND = appletSize.height;
    			XBOUND = appletSize.width;
 
-	   		image = new BufferedImage(XBOUND,YBOUND,BufferedImage.TYPE_3BYTE_BGR);
+	   		image = new BufferedImage(XBOUND,YBOUND,BufferedImage.TYPE_4BYTE_ABGR);
+	   		System.out.println("Using "+numThreads+" threads for computation...");
 
 			init=false;
 			this.addKeyListener(this);
@@ -126,12 +125,21 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 	 		this.addMouseMotionListener( this );
 
 		}
+		if(recompute){
+		    if(dragging==2){
+		      double width=maxAbs(mP.x-boxPoint.x,mP.y-boxPoint.y);
+		      loading=new ZoomScreen(p,XBOUND,YBOUND,image,boxPoint,new Point(boxPoint.x+width,boxPoint.y+width));
+		    }
+		    else
+		      loading=new LoadingBar(p,XBOUND,YBOUND,image);
+		}
 		Dimension appletSize = this.getSize();
 		if(XBOUND!=appletSize.width||YBOUND!=appletSize.height)
 			recompute=true;
  		YBOUND = appletSize.height;
 		XBOUND = appletSize.width;
-   		image = new BufferedImage(XBOUND,YBOUND,BufferedImage.TYPE_3BYTE_BGR);
+
+		image = new BufferedImage(XBOUND,YBOUND,BufferedImage.TYPE_4BYTE_ABGR);
 
 		iPage=image.getGraphics();
 
@@ -139,48 +147,15 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 		iPage.fillRect(0,0,XBOUND,YBOUND);
 
 		if(recompute) {
+			double timeP=System.nanoTime();
 			calculate();
+			timeP=System.nanoTime()-timeP;
+			System.out.println(timeP+"ns for this frame");
 			recompute=false;
 		}
 
-		for(int i=0;i<XBOUND;i++)
-			for(int j=0;j<YBOUND;j++)
-			{
-				if(calcMode==0) {
-					if(vals.data[j][i]<100000){
-						if(COLORMODE0==0)
-							image.setRGB(i,j,getColorValue(Math.exp(-vals.data[j][i]),0,1));
-						if(COLORMODE0==1)
-							image.setRGB(i,j,getColorValue(1.0/(1+Math.exp(-vals.data[j][i])),.5,1));
-						if(COLORMODE0==2)
-							image.setRGB(i,j,getColorValue(Math.exp(-vals.data[j][i]*vals.data[j][i]),.5,1));
-						if(COLORMODE0==3)
-							image.setRGB(i,j,getColorValue(1.0/(1+vals.data[j][i]*vals.data[j][i]),.5,1));
-					}
-					else
-						image.setRGB(i,j,Color.BLACK.getRGB());
-				}
-				else if(calcMode==1)
-				{
-					if(Math.abs(vals.data[j][i])>.1){
-						double val=numIterations;
-						if(!absColor)
-							val=maxValue;
-						if(COLORMODE1==0)
-							image.setRGB(i,j,getColorValue(vals.data[j][i],0,val));
-						else if(COLORMODE1==1)
-							image.setRGB(i,j,getColorValue(Math.log(vals.data[j][i]),0,Math.log(val)));
-						else if(COLORMODE1==2)
-							image.setRGB(i,j,getColorValue(1.0/(1+Math.exp(-.01*vals.data[j][i])),0,1.0/(1+Math.exp(-.01*val))));
-						else if(COLORMODE1==3)
-							image.setRGB(i,j,getColorValue(Math.exp(.0001*vals.data[j][i]),0,Math.exp(.0001*val)));
-						else if(COLORMODE1==4)
-							image.setRGB(i,j,getColorValue(Math.pow(val+5,3),Math.pow(5,3),Math.pow(6,3)));
-					}
-					else
-						image.setRGB(i,j,Color.BLACK.getRGB());
-				}
-			}
+		generateImage();
+
 		int size=50;
 
 		BufferedImage zoom=null;
@@ -206,15 +181,69 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 	{
 
 	}
+	public void generateImage()
+	{
+	  for(int i=0;i<XBOUND;i++)
+			for(int j=0;j<YBOUND;j++)
+			{
+				if(calcMode==0) {
+					if(vals[j][i]<100000){
+						if(COLORMODE0==0)
+							image.setRGB(i,j,getColorValue(Math.exp(-vals[j][i]),0,1));
+						if(COLORMODE0==1)
+							image.setRGB(i,j,getColorValue(1.0/(1+Math.exp(-vals[j][i])),.5,1));
+						if(COLORMODE0==2)
+							image.setRGB(i,j,getColorValue(Math.exp(-vals[j][i]*vals[j][i]),.5,1));
+						if(COLORMODE0==3)
+							image.setRGB(i,j,getColorValue(1.0/(1+vals[j][i]*vals[j][i]),.5,1));
+					}
+					else
+						image.setRGB(i,j,Color.BLACK.getRGB());
+				}
+				else if(calcMode==1)
+				{
+					if(Math.abs(vals[j][i])>.1){
+						double val=numIterations;
+						if(!absColor)
+							val=maxValue;
+						if(COLORMODE1==0)
+							image.setRGB(i,j,getColorValue(vals[j][i],0,val));
+						else if(COLORMODE1==1)
+							image.setRGB(i,j,getColorValue(Math.log(vals[j][i]),0,Math.log(val)));
+						else if(COLORMODE1==2)
+							image.setRGB(i,j,getColorValue(1.0/(1+Math.exp(-.01*vals[j][i])),0,1.0/(1+Math.exp(-.01*val))));
+						else if(COLORMODE1==3)
+							image.setRGB(i,j,getColorValue(Math.exp(.0001*vals[j][i]),0,Math.exp(.0001*val)));
+					}
+					else
+						image.setRGB(i,j,Color.BLACK.getRGB());
+				}
+			}
+	}
 
    public void keyPressed(KeyEvent e) {
-
+		if(e.getKeyCode()==KeyEvent.VK_M)
+   		{
+			if(numThreads!=1)
+			  numThreads=1;
+			else
+			  numThreads=4;
+			recompute=true;
+   		}
    		if(e.getKeyCode()==KeyEvent.VK_UP)
    		{
 			//cent=getScreenPoint(mP);
 			iW/=2;
 			rW/=2;
 			recompute=true;
+   		}
+   		if(e.getKeyCode()==KeyEvent.VK_1&&contrast>1)
+   		{
+			contrast/=2;
+   		}
+   		if(e.getKeyCode()==KeyEvent.VK_2)
+   		{
+			contrast*=2;
    		}
    		if(e.getKeyCode()==KeyEvent.VK_DOWN)
    		{
@@ -233,6 +262,11 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
    			if(numIterations>10)
 				numIterations-=10;
 			recompute=true;
+   		}
+   		if(e.getKeyCode()==KeyEvent.VK_H)
+   		{
+   			numIterations*=100;
+   			recompute=true;
    		}
    		if(e.getKeyCode()==KeyEvent.VK_PAGE_UP)
    		{
@@ -253,7 +287,7 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
    		{
    			if(calcMode==0) {
 	   			COLORMODE0++;
-	   			if(COLORMODE0>4)
+	   			if(COLORMODE0>3)
 	   				COLORMODE0=0;
    			}
    			if(calcMode==1) {
@@ -261,17 +295,6 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 	   			if(COLORMODE1>3)
 	   				COLORMODE1=0;
    			}
-   		}
-   		if(e.getKeyCode()==KeyEvent.VK_F1)
-   		{
-   			iterateMode++;
-   			if(iterateMode>1)
-   				iterateMode=0;
-   			recompute=true;
-   		}
-   		if(e.getKeyCode()==KeyEvent.VK_O)
-   		{
-   			System.out.println(vals);
    		}
    		if(e.getKeyCode()==KeyEvent.VK_S)
    		{
@@ -290,6 +313,22 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
    		if(e.getKeyCode()==KeyEvent.VK_A)
    		{
    			absColor=!absColor;
+   		}
+   		if(e.getKeyCode()==KeyEvent.VK_F1)
+   		{
+			if(ANIMATING==0)
+			  ANIMATING=1;
+			else
+			   ANIMATING=0;
+   		}
+   		if(e.getKeyCode()==KeyEvent.VK_F)
+   		{
+			scale/=2;
+			cent.x*=2;
+			cent.y*=2;
+			rW*=2;
+			iW*=2;
+			recompute=true;
    		}
    		if(e.getKeyCode()==KeyEvent.VK_R)
    		{
@@ -325,7 +364,7 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
 
 		cent=getScreenPoint(mP);
 		recompute=true;
-		System.out.println("iW:\t"+iW+"\nrW:\t"+rW+"\n"+cent+"\n----------------------\n");
+		//System.out.println("iW:\t"+iW+"\nrW:\t"+rW+"\n"+cent+"\n----------------------\n");
 		repaint();
    }
    public void mousePressed( MouseEvent e ) {  // called after a button is pressed down
@@ -367,7 +406,7 @@ public class Mandelbrot extends Applet implements MouseListener, MouseMotionList
     	float val=(float)(Math.pow((in-min),1)/Math.pow((max-min),1));
 
 
-    		Color c = Color.getHSBColor(val,1.0f,1.0f);
+    		Color c = Color.getHSBColor(val*contrast,1.0f,1.0f);
     		return c.getRGB();
     }
 
